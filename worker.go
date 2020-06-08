@@ -18,6 +18,7 @@ type RuntimeWorkerNumFunc func() int
 
 var (
 	ERR_FULL    = errors.New("queue full")
+	ERR_CLOSED  = errors.New("queue closed")
 	ERR_TIMEOUT = errors.New("timeout")
 
 	_WORK_ID int64
@@ -86,14 +87,14 @@ func (p *WorkerPool) AddTaskWithTimout(h Handler, timeout time.Duration) error {
 	if timeout == 0 {
 		select {
 		case <-p.exit:
-			return errors.New("worker pool was closed")
+			return ERR_CLOSED
 		case p.taskQueue <- h:
 			return nil
 		}
 	} else {
 		select {
 		case <-p.exit:
-			return errors.New("worker pool was closed")
+			return ERR_CLOSED
 		case p.taskQueue <- h:
 			return nil
 		case <-time.After(timeout):
@@ -116,6 +117,7 @@ func (p *WorkerPool) Close() {
 	for _, worker := range p.workers {
 		worker.close()
 	}
+	//TODO taskQueue task should return faields or continue process all?
 }
 
 func (p *WorkerPool) deleteWorker() {
