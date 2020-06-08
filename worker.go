@@ -6,6 +6,7 @@ import (
 	"math"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +19,8 @@ type RuntimeWorkerNumFunc func() int
 var (
 	ERR_FULL    = errors.New("queue full")
 	ERR_TIMEOUT = errors.New("timeout")
+
+	_WORK_ID int64
 )
 
 type WorkerPool struct {
@@ -27,37 +30,6 @@ type WorkerPool struct {
 	lock                 sync.Mutex
 	workers              []*worker
 	runtimeWorkerNumFunc RuntimeWorkerNumFunc
-}
-
-type worker struct {
-	exit chan struct{}
-}
-
-func newWorker() *worker {
-	return &worker{
-		exit: make(chan struct{}),
-	}
-}
-
-func (w *worker) working(taskQueue <-chan Handler) {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Printf("unexpect error in worker running: %v\n", r)
-			debug.PrintStack()
-		}
-	}()
-	for {
-		select {
-		case task := <-taskQueue:
-			task()
-		case <-w.exit:
-			return
-		}
-	}
-}
-
-func (w *worker) close() {
-	close(w.exit)
 }
 
 func NewWorkerPool(capCnt, startWorkerNum int) *WorkerPool {
@@ -73,11 +45,6 @@ func NewWorkerPoolWithRuntimeWorkerNum(capCnt, startWorkerNum int, runtimeWorker
 	for i := 0; i < startWorkerNum; i++ {
 		workerPool.addWorker()
 	}
-	if runtimeWorkerNumFunc == nil {
-		runtimeWorkerNumFunc = func() int {
-			return startWorkerNum
-		}
-	}
 	workerPool.runtimeWorkerNumFunc = runtimeWorkerNumFunc
 	if workerPool.runtimeWorkerNumFunc != nil {
 		go workerPool.workerSentinel()
@@ -86,17 +53,18 @@ func NewWorkerPoolWithRuntimeWorkerNum(capCnt, startWorkerNum int, runtimeWorker
 }
 
 func (p *WorkerPool) workerSentinel() {
-	ticker := time.NewTicker(time.Second * 1)
+	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
 		runtimeWorkerNum := p.runtimeWorkerNumFunc()
 		if runtimeWorkerNum == len(p.workers) {
-			return
+			continue
 		}
 		p.lock.Lock()
-		defer p.lock.Unlock()
 		diffNum := runtimeWorkerNum - len(p.workers)
 		adjustNum := int(math.Abs(float64(diffNum)))
 		p.adjustWorkers(adjustNum, diffNum > 0)
+		p.lock.Unlock()
+		fmt.Printf("WOKER NUM %d diffNum %d \n", len(p.workers), diffNum)
 	}
 }
 
@@ -142,9 +110,9 @@ func (p *WorkerPool) addWorker() {
 }
 
 func (p *WorkerPool) Close() {
-	close(p.exit)
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	close(p.exit)
 	for _, worker := range p.workers {
 		worker.close()
 	}
@@ -160,4 +128,40 @@ func (p *WorkerPool) deleteWorker() {
 
 func (p *WorkerPool) Name() string {
 	return "WorkerPool"
+}
+
+type worker struct {
+	exit chan struct{}
+	id   int64
+	cnt  int64
+}
+
+func newWorker() *worker {
+	return &worker{
+		exit: make(chan struct{}),
+		id:   atomic.AddInt64(&_WORK_ID, 1),
+	}
+}
+
+func (w *worker) working(taskQueue <-chan Handler) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("unexpect error in worker running: %v\n", r)
+			debug.PrintStack()
+		}
+	}()
+	for {
+		select {
+		case task := <-taskQueue:
+			w.cnt++
+			task()
+			fmt.Printf("WORK %v \t\t%d\n", w.id, w.cnt)
+		case <-w.exit:
+			return
+		}
+	}
+}
+
+func (w *worker) close() {
+	close(w.exit)
 }
