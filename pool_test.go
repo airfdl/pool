@@ -4,9 +4,19 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+const benchmarkTimes = 10000
+
+func testFunc() {
+	for i := 0; i < benchmarkTimes; i++ {
+		rand.Intn(benchmarkTimes)
+	}
+}
 
 func TestWorker(t *testing.T) {
 	pool := NewWorkerPoolWithRuntimeWorkerNum(2, 2, nextNum())
@@ -17,6 +27,26 @@ func TestWorker(t *testing.T) {
 		pool.AddTaskSync(h)
 	}
 	time.Sleep(time.Minute)
+}
+
+func BenchmarkPool(b *testing.B) {
+	fmt.Println(runtime.GOMAXPROCS(0))
+	cN := runtime.GOMAXPROCS(0)
+	p := NewWorkerPool(cN, cN)
+	var wg sync.WaitGroup
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(benchmarkTimes)
+		for j := 0; j < benchmarkTimes; j++ {
+			p.AddTaskSync(
+				func() {
+					testFunc()
+					wg.Done()
+				})
+		}
+		wg.Wait()
+	}
 }
 
 func genHandler(ctx context.Context) <-chan func() {
