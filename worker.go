@@ -19,20 +19,22 @@ func newWorker() *worker {
 }
 
 func (w *worker) working(taskQueue <-chan Handler) {
-	defer func() {
-		if r := recover(); r != nil {
-			//fmt.Printf("unexpect error in worker running: %v\n", r)
-			debug.PrintStack()
-		}
-	}()
 	for {
-		select {
-		case task := <-taskQueue:
-			w.cnt++
-			task()
-			//fmt.Printf("WORK %v \t\t%d\n", w.id, w.cnt)
-		case <-w.exit:
-			return
+		defer func() {
+			if r := recover(); r != nil {
+				//fmt.Printf("unexpect error in worker running: %v\n", r)
+				debug.PrintStack()
+			}
+		}()
+		for {
+			select {
+			case task := <-taskQueue:
+				w.cnt++
+				task()
+				//fmt.Printf("WORK %v \t\t%d\n", w.id, w.cnt)
+			case <-w.exit:
+				return
+			}
 		}
 	}
 }
